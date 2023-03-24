@@ -1,4 +1,4 @@
-## Portas display QRCODE
+# Portas display QRCODE
 LCD   ESP
 VCC - 3.3v
 GNC - GND
