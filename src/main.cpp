@@ -39,16 +39,20 @@ APIManager apiManager("ALHN-B945", "escola91148229");
 unsigned long tagDetectedTime = 0;
 bool tagDetected = false;
 
+const String baseURL = "http://192.168.1.182:3003/api/v1"; // IPV4 DA SUA MAQUINA
+
 void tftSetup()
 {
   tft.initR(INITR_BLACKTAB);
   tft.setRotation(4);
   tft.fillScreen(ST7735_WHITE);
 }
+
 void clearScreen()
 {
   tft.fillScreen(ST7735_BLACK);
 }
+
 void drawCard(const String &name, const String &value)
 {
   // Defina o espaçamento
@@ -127,6 +131,8 @@ void getTagId()
   tagDetected = true;
   tagDetectedTime = millis();
   drawCard("ITEM I", cardUID);
+  String url = baseURL + "/items/" + cardUID;
+  String response = apiManager.request(url.c_str(), "GET");
 
   rfid.PICC_HaltA();
   rfid.PCD_StopCrypto1();
@@ -167,12 +173,13 @@ void setup(void)
   Serial.begin(9600);
   SPI.begin();
   rfid.PCD_Init();
-  // apiManager.begin();
+  apiManager.begin();
   tftSetup();
   Serial.println(F("[!] - Sistema iniciado"));
 }
 
 void loop()
 {
+
   getTagId();
 }
