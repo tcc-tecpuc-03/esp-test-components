@@ -4,25 +4,9 @@
 #include "Adafruit_GFX.h"
 #include "Adafruit_ST7735.h"
 #include "qrcode.h"
-// Class
+#include "ArduinoJson.h"
 #include "WiFiClass.h"
-
-// rc522 pins
-// RST (Reset) <-> D0
-// MISO (Master Input Slave Output) <-> D6
-// MOSI (Master Output Slave Input) <-> D7
-// SCK (Serial Clock) <-> D5
-// SS/SDA (Slave select) <-> D1
-
-// display pins (Adafruit_ST7735)
-// VCC <-> 3.3V
-// GND <-> GND
-// CS <-> D8
-// RST <-> D4
-// DC/A0 <-> D3
-// SDA/MOSI <-> D7
-// SCK <-> D5
-// LED <-> 3.3V
+#include "icons.h"
 
 #define TFT_CS D8
 #define TFT_RST D4
@@ -32,14 +16,42 @@
 #define SS_PIN D1
 #define RST_PIN D0
 
-MFRC522 rfid(SS_PIN, RST_PIN);
 Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
+MFRC522 rfid(SS_PIN, RST_PIN);
 APIManager apiManager("ALHN-B945", "escola91148229");
 
+int BasketId;
+bool basketIdAssigned = false;                             // Variável para controlar se o BasketId já foi atribuído ou não
+                                                           // id do carrinho (inicia nulo e pega apos criar o carrinho)
+const String baseURL = "http://192.168.1.182:3003/api/v1"; // IPV4 DA SUA MAQUINA COM A PORTA DO BACKEND (3003)
+const String ServerBaseURL = "http://192.168.1.182:3333";
 unsigned long tagDetectedTime = 0;
 bool tagDetected = false;
+int lastButtonState = HIGH;
+unsigned long lastDebounceTime = 0;
+unsigned long debounceDelay = 50;
 
-const String baseURL = "http://192.168.1.182:3003/api/v1"; // IPV4 DA SUA MAQUINA
+void createBasket()
+{
+  if (basketIdAssigned)
+  {
+    return; // Se o BasketId já foi atribuído, não faz nada e retorna
+  }
+
+  String postBasket = apiManager.request(
+      (baseURL + "/basket").c_str(),
+      "POST",
+      "{\"rfid\": []}");
+
+  DynamicJsonDocument basketJson(256);
+  deserializeJson(basketJson, postBasket);
+  BasketId = basketJson["id"];
+
+  Serial.print(F("Basket ID: "));
+  Serial.println(BasketId);
+
+  basketIdAssigned = true;
+}
 
 void tftSetup()
 {
@@ -48,98 +60,44 @@ void tftSetup()
   tft.fillScreen(ST7735_WHITE);
 }
 
-void clearScreen()
+void drawCard(const String &name, const String &price)
 {
-  tft.fillScreen(ST7735_BLACK);
-}
-
-void drawCard(const String &name, const String &value)
-{
-  // Defina o espaçamento
   int padding = 5;
 
-  // Defina as coordenadas e as dimensões do card
   int cardX = padding;
   int cardY = padding;
   int cardWidth = tft.width() - (2 * padding);
   int cardHeight = tft.height() - (padding);
 
-  // Cores personalizadas
   uint16_t backgroundColor = ST7735_WHITE;
   uint16_t borderColor = ST7735_BLACK;
   uint16_t titleColor = ST7735_BLACK;
-  uint16_t valueColor = ST7735_BLUE;
   uint16_t priceColor = ST7735_GREEN;
 
-  // Desenhe o retângulo do card com bordas arredondadas
   tft.fillRoundRect(cardX, cardY, cardWidth, cardHeight, 10, backgroundColor);
   tft.drawRoundRect(cardX, cardY, cardWidth, cardHeight, 10, borderColor);
 
-  // Defina as coordenadas do texto
   int textX = cardX + padding;
   int textY = cardY + padding;
 
-  // Calcule a posição horizontal para centralizar o texto
-  int nameWidth = name.length() * 6; // Largura aproximada do texto com tamanho de fonte 1
+  int nameWidth = name.length() * 6;
   int nameX = textX + (cardWidth - nameWidth) / 2;
 
-  // Escreva o nome no card
   tft.setTextColor(titleColor);
   tft.setTextSize(1);
   tft.setCursor(nameX, textY);
   tft.println(name);
 
-  // Escreva o valor no card
-  tft.setTextColor(valueColor);
-  tft.setTextSize(1);
-  tft.setCursor(textX, textY + 35);
-  tft.println(value);
-
-  // Escreva o preço no card
   tft.setTextColor(priceColor);
   tft.setTextSize(2);
   tft.setCursor(textX, textY + 70);
-  tft.println("R$ 0,00");
-}
-
-void getTagId()
-{
-  if (!rfid.PICC_IsNewCardPresent())
-  {
-    if (tagDetected && (millis() - tagDetectedTime >= 10000))
-    {
-      tagDetected = false;
-      clearScreen();
-    }
-    return;
-  }
-
-  if (!rfid.PICC_ReadCardSerial())
-    return;
-
-  String cardUID = "";
-  for (byte i = 0; i < rfid.uid.size; i++)
-  {
-    if (rfid.uid.uidByte[i] < 0x10)
-      cardUID += "0";
-    cardUID += String(rfid.uid.uidByte[i], HEX);
-  }
-
-  Serial.print(F("Card UID: "));
-  Serial.println(cardUID);
-
-  tagDetected = true;
-  tagDetectedTime = millis();
-  drawCard("ITEM I", cardUID);
-  String url = baseURL + "/items/" + cardUID;
-  String response = apiManager.request(url.c_str(), "GET");
-
-  rfid.PICC_HaltA();
-  rfid.PCD_StopCrypto1();
+  tft.println("R$ " + price);
 }
 
 void drawQRCode(const char *link)
 {
+  tft.fillScreen(ST7735_WHITE);
+
   const uint8_t ecc = 0;
   const uint8_t version = 3;
 
@@ -168,18 +126,127 @@ void drawQRCode(const char *link)
   }
 }
 
+void clearScreen()
+{
+  tft.fillScreen(ST7735_WHITE);
+
+  int bitmapWidth = 64;
+  int bitmapHeight = 64;
+
+  int startX = (tft.width() - bitmapWidth) / 2;
+  int startY = (tft.height() - bitmapHeight) / 2;
+
+  tft.drawBitmap(startX, startY, bottle_icon, bitmapWidth, bitmapHeight, ST7735_GREEN);
+
+  int textX = startX;
+  int textY = startY + bitmapHeight;
+
+  tft.setTextColor(ST7735_GREEN);
+  tft.setTextSize(2);
+  tft.setCursor(textX, textY);
+  tft.println("Buysket");
+}
+
+void getTagId()
+{
+  if (!rfid.PICC_IsNewCardPresent())
+  {
+    if (tagDetected && (millis() - tagDetectedTime >= 10000))
+    {
+      tagDetected = false;
+      clearScreen();
+    }
+    return;
+  }
+
+  if (!rfid.PICC_ReadCardSerial())
+    return;
+
+  String cardUID = "";
+  for (byte i = 0; i < rfid.uid.size; i++)
+  {
+    if (rfid.uid.uidByte[i] < 0x10)
+      cardUID += "0";
+    cardUID += String(rfid.uid.uidByte[i], HEX);
+  }
+
+  Serial.print(F("Card UID: "));
+  Serial.println(cardUID);
+  tagDetected = true;
+  tagDetectedTime = millis();
+
+  String itemData = apiManager.request((baseURL + "/items/" + cardUID).c_str(), "GET");
+  const size_t bufferSize = JSON_ARRAY_SIZE(1) + JSON_OBJECT_SIZE(7) + 300;
+  DynamicJsonDocument jsonDoc(bufferSize);
+
+  String payload = "{\"basketId\": " + String(BasketId) + ", \"rfid\": [\"" + cardUID + "\"]}";
+  apiManager.request((baseURL + "/basket").c_str(), "POST", payload.c_str());
+  Serial.println("-----------[Payload]---------");
+  Serial.println(payload);
+  Serial.println("-----------------------------");
+
+  Serial.println("-----------[Id carrinho]---------");
+  Serial.println(BasketId);
+  Serial.println("-----------------------------");
+
+  DeserializationError error = deserializeJson(jsonDoc, itemData);
+
+  if (error)
+  {
+    Serial.print(F("Falha ao analisar JSON: "));
+    Serial.println(error.c_str());
+    return;
+  }
+
+  JsonArray jsonArray = jsonDoc.as<JsonArray>();
+  if (jsonArray.size() == 0)
+  {
+    Serial.println(F("Nenhum item encontrado."));
+    return;
+  }
+
+  JsonObject item = jsonArray[0];
+  String nome = item["nome"].as<String>();
+  String preco = item["preco"].as<String>();
+
+  Serial.print(F("Nome: "));
+  Serial.println(nome);
+  Serial.print(F("Preço: "));
+  Serial.println(preco);
+
+  drawCard(nome, preco);
+
+  // rfid.PICC_HaltA();
+  // rfid.PCD_StopCrypto1();
+}
+
 void setup(void)
 {
+  pinMode(D2, INPUT_PULLUP);
   Serial.begin(9600);
   SPI.begin();
-  rfid.PCD_Init();
-  apiManager.begin();
   tftSetup();
   Serial.println(F("[!] - Sistema iniciado"));
+  rfid.PCD_Init();
+  Serial.println(F("[!] - RFID Iniciado..."));
+  apiManager.begin();
+  Serial.println(F("[!] - Wifi iniciado..."));
+
+  Serial.println(F("[!] - Criando carrinho..."));
+  createBasket();
+  Serial.println("--------------------");
+  clearScreen();
 }
 
 void loop()
 {
+  int reading = digitalRead(D2);
+
+  if (reading == 0)
+  {
+    String qrLink = ServerBaseURL + "/cesta/" + String(BasketId);
+    drawQRCode(qrLink.c_str());
+  }
 
   getTagId();
 }

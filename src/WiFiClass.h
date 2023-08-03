@@ -37,22 +37,29 @@ public:
     Serial.println("-------------------------");
   }
 
-  String request(const char *url, const char *metodo)
+  String request(const char *url, const char *metodo, const char *jsonBody = "")
   {
     HTTPClient http;
-    WiFiClient client; // Create a WiFiClient object
+    WiFiClient client;
 
-    Serial.print("Realizando chamada para");
+    Serial.println("-----------[" + String(metodo) + "]-----------");
+    Serial.print("URL: ");
     Serial.println(url);
+    Serial.print("Body: ");
+    Serial.println(jsonBody);
+    Serial.println("----------------------------------");
 
-    http.begin(client, url); // Pass the WiFiClient object to begin()
+    http.begin(client, url);
 
-    int codigoResposta = http.sendRequest(metodo);
+    http.addHeader("Content-Type", "application/json");
+
+    int codigoResposta = http.sendRequest(metodo, jsonBody);
     String resposta = "";
 
     if (codigoResposta == HTTP_CODE_OK)
     {
       resposta = http.getString();
+      Serial.println("-----------[" + String(metodo) + "]-----------");
       Serial.print("Resposta recebida: ");
       Serial.println(resposta);
     }
